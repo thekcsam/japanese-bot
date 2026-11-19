@@ -7,16 +7,18 @@ from datetime import datetime, timedelta, timezone
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from . import db, session
+from . import chat, db, session
+from .chat import CHAT_ERROR_LABELS
 from .session import ERROR_LABELS
 
 log = logging.getLogger(__name__)
 
 HELP = (
     "🇯🇵 日语翻译练习\n\n"
-    "每天我会选一个主题，发 10 句日语给你翻译成中文。\n\n"
+    "每天我会选一个日常场景，发 10 句日语给你翻译成中文，然后用日语聊这个话题。\n\n"
     "/today — 开始或继续今天的课程\n"
     "/skip — 跳过当前句子并查看答案\n"
+    "/stop — 结束会话练习\n"
     "/stats — 学习统计\n"
     "/revive — 你离开后我会自动暂停，发送 /revive 恢复"
 )
@@ -72,10 +74,12 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"连续天数：{st['streak']}",
         f"完成课程：{st['lessons_done']}",
         f"7 日平均分：{st['week_avg']:.0f}" if st["week_avg"] is not None else "7 日平均分：—",
+        f"7 日会话平均分：{st['chat_week_avg']:.0f}" if st["chat_week_avg"] is not None else "7 日会话平均分：—",
     ]
+    labels = ERROR_LABELS | CHAT_ERROR_LABELS
     weak = db.weak_points()
     if weak:
-        lines.append("弱点：" + "、".join(f"{ERROR_LABELS.get(w['type'], w['type'])}×{w['count']}" for w in weak))
+        lines.append("弱点：" + "、".join(f"{labels.get(w['type'], w['type'])}×{w['count']}" for w in weak))
     if learner["paused"]:
         lines.append("状态：⏸ 已暂停（发送 revive 恢复）")
     await update.message.reply_text("\n".join(lines))
@@ -88,11 +92,22 @@ async def cmd_revive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await session.resume_or_start(context.bot, update.effective_chat.id)
 
 
-async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if await _paused_gate(update):
         return
     async with session.lock:
-        await session.handle_answer(context.bot, update.effective_chat.id, update.message.text.strip())
+        await chat.stop(context.bot, update.effective_chat.id)
+
+
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _paused_gate(update):
+        return
+    text = update.message.text.strip()
+    async with session.lock:
+        if db.active_chat():
+            await chat.handle_reply(context.bot, update.effective_chat.id, text)
+        else:
+            await session.handle_answer(context.bot, update.effective_chat.id, text)
 
 
 # --- jobs ----------------------------------------------------------------

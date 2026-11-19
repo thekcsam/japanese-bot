@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     key_expressions_json TEXT,  -- old lessons only; replaced by focus_json
     focus_json TEXT,  -- {"words": [...], "patterns": [...]}
     avg_score REAL,
-    status TEXT NOT NULL DEFAULT 'active'  -- active | completed | abandoned
+    status TEXT NOT NULL DEFAULT 'active',  -- active | completed | abandoned
+    chat_status TEXT  -- NULL (not started) | active | done
 );
 CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +41,18 @@ CREATE TABLE IF NOT EXISTS items (
     target_point TEXT,
     answer TEXT,
     skipped INTEGER NOT NULL DEFAULT 0,
+    score INTEGER,
+    feedback_json TEXT,
+    answered_at TEXT
+);
+CREATE TABLE IF NOT EXISTS chat_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    idx INTEGER NOT NULL,
+    question_ja TEXT NOT NULL,
+    question_zh TEXT,
+    target TEXT,
+    answer TEXT,
     score INTEGER,
     feedback_json TEXT,
     answered_at TEXT
@@ -65,8 +78,9 @@ def init() -> None:
     with connect() as c:
         c.executescript(SCHEMA)
         cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
-        if "focus_json" not in cols:
-            c.execute("ALTER TABLE sessions ADD COLUMN focus_json TEXT")
+        for col in ("focus_json", "chat_status"):
+            if col not in cols:
+                c.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
         c.execute("INSERT OR IGNORE INTO learner (id) VALUES (1)")
 
 
@@ -190,6 +204,49 @@ def skip_item(item_id: int) -> None:
         )
 
 
+# --- conversation practice -------------------------------------------------
+
+def set_chat_status(sid: int, status: str) -> None:
+    with connect() as c:
+        c.execute("UPDATE sessions SET chat_status = ? WHERE id = ?", (status, sid))
+
+
+def active_chat() -> sqlite3.Row | None:
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM sessions WHERE chat_status = 'active' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+
+def add_chat_turn(sid: int, question: dict) -> None:
+    with connect() as c:
+        idx = c.execute("SELECT COUNT(*) FROM chat_turns WHERE session_id = ?", (sid,)).fetchone()[0]
+        c.execute(
+            "INSERT INTO chat_turns (session_id, idx, question_ja, question_zh, target) VALUES (?, ?, ?, ?, ?)",
+            (sid, idx, question["question_ja"], question["question_zh"], question["target"]),
+        )
+
+
+def chat_turns(sid: int) -> list[sqlite3.Row]:
+    with connect() as c:
+        return c.execute("SELECT * FROM chat_turns WHERE session_id = ? ORDER BY idx", (sid,)).fetchall()
+
+
+def current_chat_turn(sid: int) -> sqlite3.Row | None:
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM chat_turns WHERE session_id = ? AND answer IS NULL ORDER BY idx LIMIT 1", (sid,)
+        ).fetchone()
+
+
+def save_chat_answer(turn_id: int, answer: str, score: int, feedback: dict) -> None:
+    with connect() as c:
+        c.execute(
+            "UPDATE chat_turns SET answer = ?, score = ?, feedback_json = ?, answered_at = ? WHERE id = ?",
+            (answer, score, json.dumps(feedback, ensure_ascii=False), now_iso(), turn_id),
+        )
+
+
 # --- stats ---------------------------------------------------------------
 
 def weak_points(days: int = 7, top: int = 5) -> list[dict]:
@@ -197,9 +254,11 @@ def weak_points(days: int = 7, top: int = 5) -> list[dict]:
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with connect() as c:
         rows = c.execute(
-            "SELECT feedback_json FROM items WHERE feedback_json IS NOT NULL AND answered_at >= ?"
+            "SELECT feedback_json, answered_at FROM items WHERE feedback_json IS NOT NULL AND answered_at >= ?"
+            " UNION ALL"
+            " SELECT feedback_json, answered_at FROM chat_turns WHERE feedback_json IS NOT NULL AND answered_at >= ?"
             " ORDER BY answered_at DESC",
-            (since,),
+            (since, since),
         ).fetchall()
     counts: Counter = Counter()
     examples: dict[str, str] = {}
@@ -224,8 +283,15 @@ def stats(tz) -> dict:
         day -= timedelta(days=1)
     week_ago = (datetime.now(tz).date() - timedelta(days=7)).isoformat()
     week = [r["avg_score"] for r in rows if r["date"] > week_ago and r["avg_score"] is not None]
+    with connect() as c:
+        chat_avg = c.execute(
+            "SELECT AVG(t.score) FROM chat_turns t JOIN sessions s ON s.id = t.session_id"
+            " WHERE t.score IS NOT NULL AND s.date > ?",
+            (week_ago,),
+        ).fetchone()[0]
     return {
         "streak": streak,
         "week_avg": sum(week) / len(week) if week else None,
+        "chat_week_avg": chat_avg,
         "lessons_done": len(rows),
     }

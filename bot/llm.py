@@ -77,3 +77,19 @@ async def grade_translation(level: str, item, answer: str) -> dict:
         prompts.GRADE_SCHEMA,
         os.getenv("CLAUDE_MODEL_GRADE", "sonnet"),
     )
+
+
+def focus_items(focus: dict) -> list[str]:
+    return [w["ja"] for w in focus["words"]] + [p["pattern"] for p in focus["patterns"]]
+
+
+async def chat_turn(level: str, topic: str, focus: dict, history: list[dict], unused: list[str],
+                    answer: str | None) -> dict:
+    """First question (answer=None), or grade `answer` and return feedback plus `next` question."""
+    items = focus_items(focus)
+    schema = prompts.chat_question_schema(items) if answer is None else prompts.chat_turn_schema(items)
+    return await ask(
+        prompts.chat_prompt(level, topic, focus, history, unused, answer),
+        schema,
+        os.getenv("CLAUDE_MODEL_GRADE", "sonnet"),
+    )

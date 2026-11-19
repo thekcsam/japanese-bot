@@ -1,4 +1,4 @@
-"""Daily lesson flow: start → send items one by one → grade → summary.
+"""Daily lesson flow: start → send items one by one → grade → summary → conversation (chat.py).
 
 Every outgoing message goes through `send()`, which records `last_bot_msg_at`
 so the idle checker can pause the bot when the learner is away.
@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from telegram import Bot
 from telegram.constants import ChatAction, ParseMode
 
-from . import db, llm
+from . import chat, db, llm
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +50,9 @@ async def start_lesson(bot: Bot, chat_id: int) -> None:
     old = db.active_session()
     if old:
         db.close_session(old["id"], "abandoned")
+    old_chat = db.active_chat()
+    if old_chat:
+        db.set_chat_status(old_chat["id"], "done")
 
     level = db.learner()["level"]
     await bot.send_chat_action(chat_id, ChatAction.TYPING)
@@ -73,7 +76,11 @@ async def start_lesson(bot: Bot, chat_id: int) -> None:
 
 
 async def resume_or_start(bot: Bot, chat_id: int) -> None:
-    """Resume today's unfinished lesson, otherwise start a new one."""
+    """Resume today's unfinished lesson or conversation, otherwise start a new lesson."""
+    c = db.active_chat()
+    if c and c["date"] == today():
+        await chat.resume(bot, chat_id, c)
+        return
     s = db.active_session()
     if s and s["date"] == today():
         await send(bot, chat_id, f"▶️ 继续今天的主题：<b>{escape(s['topic_ja'])}</b>")
@@ -175,7 +182,8 @@ async def finish(bot: Bot, chat_id: int, sid: int) -> None:
     weak = db.weak_points()
     if weak:
         lines.append("\n📌 最近的弱点：")
-        lines += [f"• {ERROR_LABELS.get(w['type'], w['type'])} ×{w['count']}" for w in weak]
+        labels = ERROR_LABELS | chat.CHAT_ERROR_LABELS
+        lines += [f"• {labels.get(w['type'], w['type'])} ×{w['count']}" for w in weak]
     if s["focus_json"]:
         focus = json.loads(s["focus_json"])
         lines.append("\n📝 今日单词：")
@@ -183,5 +191,5 @@ async def finish(bot: Bot, chat_id: int, sid: int) -> None:
         lines.append("\n🧩 今日句型：")
         lines += [f"• <b>{escape(p['pattern'])}</b> — {escape(p['zh'])}\n  例：{escape(p['example'])}"
                   for p in focus["patterns"]]
-    lines.append("\n🗣 下一步：语音讨论模式即将推出。")
     await send(bot, chat_id, "\n".join(lines))
+    await chat.start(bot, chat_id, sid)

@@ -6,7 +6,10 @@ sentences that use them, all at the same level. You translate each one into
 Chinese (Mandarin); Claude grades your comprehension, explains what you missed, and adapts
 the next lesson to your weak points.
 
-**Status:** Phase 1 (text translation) built. Phase 2 (voice discussion + pronunciation) planned.
+After the translation, the bot asks you questions about the situation so you use the 3
+words and 3 patterns in your own Japanese replies, until you send `/stop`.
+
+**Status:** Phase 1 (translation) and Phase 2a (text conversation) built. Phase 2b (voice + pronunciation) planned.
 
 ## Features (Phase 1)
 
@@ -24,12 +27,16 @@ the next lesson to your weak points.
 | Away → pause | If you don't answer within `IDLE_TIMEOUT_MIN`, the bot silently pauses: no messages, no daily lessons. |
 | `revive` | Send `revive` (or `/revive`) to unpause. Resumes today's unfinished lesson at the same sentence, otherwise starts today's lesson. While paused, other messages get one reminder only. |
 | Summary | At the end: average, level change, weak points, the 3 words and 3 patterns with examples. |
+| Conversation practice | Starts right after the translation summary. Each question is in Japanese, with a 💡 hint (the word/pattern to use) and the Chinese translation behind a spoiler. Questions target unused focus items first, then review the hardest ones. Open-ended until `/stop` (or `stop` / `停止` / `结束`). |
+| Conversation feedback | Per reply: score, natural version of what you meant, typed mistakes (`particle`, `conjugation`, `grammar`, `word_choice`, `unnatural`), focus items used. At `/stop`: replies, average, ✅/⬜ for each focus item. |
+| Conversation vs level | Conversation scores don't change your level; its mistakes count toward weak points. `/stats` shows the 7-day conversation average. |
 | Private | Only `ALLOWED_USER_ID` can use it; everyone else is ignored. |
 
 ### Commands
 
 - `/today` — start or resume today's lesson
 - `/skip` — skip the current sentence (scores 0) and show the answer
+- `/stop` — end conversation practice
 - `/stats` — level, streak, 7-day average, weak points
 - `revive` / `/revive` — unpause after being away
 - `/start` — help (before setup: shows your Telegram user ID)
@@ -43,11 +50,14 @@ the next lesson to your weak points.
    Put it in `.env` as `ALLOWED_USER_ID` and restart.
 5. **Claude CLI:** the `claude` command must be installed and logged in on this Mac
    (it is used for lesson generation and grading).
-6. **Run** (inside `tmux` so it survives closing the terminal; `caffeinate` keeps the Mac awake):
+6. **Run** (inside `tmux` so it survives closing the terminal; `caffeinate -is` keeps the Mac
+   from sleeping while the bot runs, `-s` only works on power):
    ```sh
    tmux new -s jpbot
-   caffeinate -i uv run python -m bot.main
+   caffeinate -is uv run python -m bot.main
    ```
+   With the lid closed the Mac sleeps anyway, unless it has power and an external display
+   (or `sudo pmset -a disablesleep 1`, undo with `0`).
    Detach with `Ctrl-b d`; reattach with `tmux attach -t jpbot`.
 
 ### Configuration (`.env`)
@@ -74,9 +84,10 @@ Telegram ⇄ python-telegram-bot (long polling, on this Mac)
               │
               ├─ handlers.py   commands, text answers, jobs (daily lesson, idle check every 60s)
               ├─ session.py    lesson flow: start → item → grade → next → summary
+              ├─ chat.py       conversation: question → reply → feedback + next question … /stop
               ├─ llm.py ──────► `claude -p --json-schema …` (Claude Code CLI, subscription)
               ├─ prompts.py    learner profile, prompts, JSON schemas
-              └─ db.py ───────► data/bot.db (SQLite: learner, sessions, items)
+              └─ db.py ───────► data/bot.db (SQLite: learner, sessions, items, chat_turns)
 ```
 
 - **Lesson generation:** ~20–30 s. **Grading:** a few seconds per answer.
@@ -101,13 +112,15 @@ Telegram ⇄ python-telegram-bot (long polling, on this Mac)
 | 2026-11-19 | Everyday situations, common spoken Japanese | First topic (behind-the-scenes of konbini culture) was too far from daily conversation. |
 | 2026-11-19 | 3 focus words + 3 focus patterns per lesson, all 10 sentences at one level | Fewer things to learn, seen repeatedly. A difficulty ramp inside a lesson made the last sentences much harder than the learner's level. |
 | 2026-11-19 | 10 half-step levels (N4 … N2- N2 N2+ … N1) instead of 4 | One full JLPT level per day was too big a jump. |
+| 2026-11-19 | Conversation after translation: open-ended until `/stop`, feedback after every reply, hint + spoiler translation, scores don't affect level | Practise producing the focus items, not just reading them. Level stays tied to one consistent measure (translation). |
+| 2026-11-19 | One LLM call per conversation turn (grade reply + next question) | Halves the wait between replies. |
+| 2026-11-19 | `handle_reply()` takes text | Voice (Phase 2b) only needs to transcribe and call it. |
 | 2026-11-19 | Python ≥3.12 via `uv` | System Python is 3.9; uv manages the interpreter and lockfile. |
 
 ## Roadmap
 
-### Phase 2 — voice discussion (not started)
-- After the translation, the bot asks questions about the day's topic **by voice** (TTS) and
-  you answer **by voice**, until you say "stop".
+### Phase 2b — voice (not started)
+- The conversation questions also sent **by voice** (TTS); you can answer **by voice**.
 - Pronunciation feedback per word/sound (long vowels, っ, ん, ら行).
 - Planned: Azure Speech free tier (F0, ja-JP) for speech-to-text + pronunciation assessment,
   ffmpeg for Telegram OGG → WAV. To decide before building: TTS voice, and log it here.

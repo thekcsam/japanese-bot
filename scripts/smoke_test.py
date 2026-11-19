@@ -16,6 +16,18 @@ async def main() -> None:
     for it in lesson["items"]:
         print(f"  [{it['target_point']}] {it['ja']}  →  {it['reference_zh']}")
 
+    # Conversation practice: first question, then grade a reply that uses a focus item.
+    focus = {"words": lesson["focus_words"], "patterns": lesson["focus_patterns"]}
+    items = llm.focus_items(focus)
+    q = await llm.chat_turn("N3", lesson["topic_ja"], focus, [], items, None)
+    print("question:", q["question_ja"], "| target:", q["target"])
+    assert q["target"] in items
+    reply = f"はい、{lesson['focus_patterns'][0]['example']}"
+    turn = await llm.chat_turn("N3", lesson["topic_ja"], focus, [{"q": q["question_ja"], "a": None}],
+                               items, reply)
+    print(json.dumps(turn, ensure_ascii=False, indent=2))
+    assert "next" in turn and turn["next"]["target"] in items
+
     # Deliberate false-friend mistake: 手紙 means "letter", not "toilet paper".
     item = {"ja": "母から手紙が届いた。", "reference_zh": "收到了妈妈寄来的信。",
             "target_point": "手紙（信）", "reading": "ははからてがみがとどいた。"}

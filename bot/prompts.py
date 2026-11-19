@@ -135,3 +135,91 @@ Scoring: 90-100 meaning and nuance fully correct; 70-89 meaning correct, some nu
 40-69 partly misunderstood; 0-39 mostly wrong or empty.
 List each misunderstanding in `errors` with the most fitting type. Empty list if none.
 """
+
+
+# --- conversation practice -------------------------------------------------
+
+CHAT_ERROR_TYPES = ["particle", "conjugation", "grammar", "word_choice", "unnatural"]
+
+
+def _question_schema(focus_items: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "question_ja": {"type": "string", "description": "one short, natural question in Japanese"},
+            "question_zh": {"type": "string", "description": "Chinese translation of the question"},
+            "target": {"type": "string", "enum": focus_items,
+                       "description": "the focus word/pattern the learner should use to answer"},
+        },
+        "required": ["question_ja", "question_zh", "target"],
+    }
+
+
+def chat_question_schema(focus_items: list[str]) -> dict:
+    return _question_schema(focus_items)
+
+
+def chat_turn_schema(focus_items: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "comment": {"type": "string", "description": "one short line in Chinese on the reply"},
+            "natural_ja": {"type": "string", "description": "a natural, correct version of what the learner meant"},
+            "errors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": CHAT_ERROR_TYPES},
+                        "note": {"type": "string", "description": "in Chinese, quote the learner's Japanese"},
+                    },
+                    "required": ["type", "note"],
+                },
+            },
+            "used_focus": {
+                "type": "array",
+                "items": {"type": "string", "enum": focus_items},
+                "description": "focus words/patterns the learner used correctly in this reply",
+            },
+            "next": _question_schema(focus_items),
+        },
+        "required": ["score", "comment", "natural_ja", "errors", "used_focus", "next"],
+    }
+
+
+def chat_prompt(level: str, topic: str, focus: dict, history: list[dict], unused: list[str],
+                answer: str | None) -> str:
+    task = (
+        "Grade the learner's latest reply, then ask the next question."
+        if answer is not None else
+        "Ask the first question."
+    )
+    grading = "" if answer is None else f"""
+Learner's latest reply: {answer}
+
+Grading (the learner's Japanese, not the content): 90-100 correct and natural;
+70-89 understandable with small mistakes; 40-69 several mistakes; 0-39 hard to
+understand or not in Japanese. List each mistake in `errors`. `natural_ja` keeps the
+learner's meaning. `used_focus` only lists items used correctly.
+"""
+    return f"""{LEARNER_PROFILE.format(level=level)}
+The learner just finished translating sentences about: {topic}
+Now practise speaking: you are a friendly conversation partner asking the learner
+about their own life and opinions on this topic, so they get to use today's focus
+words and patterns in their own sentences.
+
+Focus words: {json.dumps(focus["words"], ensure_ascii=False)}
+Focus patterns: {json.dumps(focus["patterns"], ensure_ascii=False)}
+Not used correctly yet: {json.dumps(unused, ensure_ascii=False)}
+
+Conversation so far:
+{json.dumps(history, ensure_ascii=False)}
+{grading}
+{task}
+Next question rules:
+- Short, casual-polite Japanese at level {level}, about the learner's own experience.
+- Naturally invites an answer using `target`. Pick `target` from the not-yet-used
+  list while it isn't empty; after that, review the ones the learner found hardest.
+- Follow on from what the learner said when it fits; don't repeat earlier questions.
+"""
