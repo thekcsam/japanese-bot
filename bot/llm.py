@@ -84,12 +84,12 @@ def focus_items(focus: dict) -> list[str]:
 
 
 async def chat_turn(level: str, topic: str, focus: dict, history: list[dict], unused: list[str],
-                    answer: str | None) -> dict:
+                    answer: str | None, voice: bool = False) -> dict:
     """First question (answer=None), or grade `answer` and return feedback plus `next` question."""
     items = focus_items(focus)
     schema = prompts.chat_question_schema(items) if answer is None else prompts.chat_turn_schema(items)
     return await ask(
-        prompts.chat_prompt(level, topic, focus, history, unused, answer),
+        prompts.chat_prompt(level, topic, focus, history, unused, answer, voice),
         schema,
         os.getenv("CLAUDE_MODEL_GRADE", "sonnet"),
     )

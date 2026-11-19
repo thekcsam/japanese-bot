@@ -188,8 +188,14 @@ def chat_turn_schema(focus_items: list[str]) -> dict:
     }
 
 
+VOICE_NOTE = (
+    " The reply was spoken and transcribed by speech recognition: ignore punctuation and"
+    " kanji/kana choice, and don't count likely recognition slips as mistakes."
+)
+
+
 def chat_prompt(level: str, topic: str, focus: dict, history: list[dict], unused: list[str],
-                answer: str | None) -> str:
+                answer: str | None, voice: bool = False) -> str:
     task = (
         "Grade the learner's latest reply, then ask the next question."
         if answer is not None else
@@ -200,7 +206,7 @@ Learner's latest reply: {answer}
 
 Grading (the learner's Japanese, not the content): 90-100 correct and natural;
 70-89 understandable with small mistakes; 40-69 several mistakes; 0-39 hard to
-understand or not in Japanese. List each mistake in `errors`. `natural_ja` keeps the
+understand or not in Japanese.{VOICE_NOTE if voice else ""} List each mistake in `errors`. `natural_ja` keeps the
 learner's meaning. `used_focus` only lists items used correctly.
 """
     return f"""{LEARNER_PROFILE.format(level=level)}

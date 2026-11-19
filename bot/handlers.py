@@ -3,11 +3,13 @@
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
-from . import chat, db, session
+from . import chat, db, session, voice
 from .chat import CHAT_ERROR_LABELS
 from .session import ERROR_LABELS
 
@@ -18,6 +20,7 @@ HELP = (
     "每天我会选一个日常场景，发 10 句日语给你翻译成中文，然后用日语聊这个话题。\n\n"
     "/today — 开始或继续今天的课程\n"
     "/skip — 跳过当前句子并查看答案\n"
+    "/chat — 开始或继续今天的会话练习（可以用文字或语音回答）\n"
     "/stop — 结束会话练习\n"
     "/stats — 学习统计\n"
     "/revive — 你离开后我会自动暂停，发送 /revive 恢复"
@@ -90,6 +93,35 @@ async def cmd_revive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("👋 欢迎回来！")
     async with session.lock:
         await session.resume_or_start(context.bot, update.effective_chat.id)
+
+
+async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _paused_gate(update):
+        return
+    async with session.lock:
+        await chat.start_or_resume(context.bot, update.effective_chat.id)
+
+
+async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if await _paused_gate(update):
+        return
+    chat_id = update.effective_chat.id
+    async with session.lock:
+        if not db.active_chat():
+            await session.send(context.bot, chat_id, "语音只能用在会话练习里。翻译请用文字回答；发送 /chat 开始会话练习。")
+            return
+        await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
+        try:
+            text = await voice.transcribe(update.message.voice)
+        except Exception:
+            log.exception("transcription failed")
+            await session.send(context.bot, chat_id, "⚠️ 语音识别失败，请再录一次或用文字回答。", waiting=True)
+            return
+        if not text:
+            await session.send(context.bot, chat_id, "🎤 没听清，请再录一次。", waiting=True)
+            return
+        await session.send(context.bot, chat_id, f"🎤 我听到：{escape(text)}")
+        await chat.handle_reply(context.bot, chat_id, text, voice=True)
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

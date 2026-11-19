@@ -30,7 +30,9 @@ def main() -> None:
         app.add_handler(CommandHandler("skip", handlers.cmd_skip, filters=me))
         app.add_handler(CommandHandler("stats", handlers.cmd_stats, filters=me))
         app.add_handler(CommandHandler("revive", handlers.cmd_revive, filters=me))
+        app.add_handler(CommandHandler("chat", handlers.cmd_chat, filters=me))
         app.add_handler(CommandHandler("stop", handlers.cmd_stop, filters=me))
+        app.add_handler(MessageHandler(me & filters.VOICE, handlers.on_voice))
         app.add_handler(MessageHandler(me & filters.Regex(r"(?i)^\s*(stop|停止|结束)\s*$"), handlers.cmd_stop))
         app.add_handler(MessageHandler(me & filters.TEXT & ~filters.COMMAND, handlers.on_text))
 

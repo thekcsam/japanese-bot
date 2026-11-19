@@ -1,7 +1,8 @@
 """Conversation practice after the translation: the bot asks about the day's topic and
 the learner answers in Japanese, using the 3 focus words and 3 patterns, until "stop".
 
-`handle_reply()` takes plain text so voice (transcribed) can feed into it later.
+Replies can be text or voice; voice is transcribed (voice.py) and goes through the same
+`handle_reply()`.
 """
 
 import json
@@ -72,6 +73,19 @@ async def start(bot: Bot, chat_id: int, sid: int) -> None:
     await send_question(bot, chat_id, q)
 
 
+async def start_or_resume(bot: Bot, chat_id: int) -> None:
+    """/chat: resume today's conversation, or start one for today's finished lesson."""
+    c = db.active_chat()
+    if c and c["date"] == session.today():
+        await resume(bot, chat_id, c)
+        return
+    s = db.session_for_date(session.today())
+    if s is None or s["status"] != "completed" or not s["focus_json"]:
+        await session.send(bot, chat_id, "今天还没有完成的课程。先发送 /today 完成翻译练习。")
+        return
+    await start(bot, chat_id, s["id"])
+
+
 async def resume(bot: Bot, chat_id: int, s) -> None:
     turn = db.current_chat_turn(s["id"])
     await session.send(bot, chat_id, f"▶️ 继续会话练习：<b>{escape(s['topic_ja'])}</b>")
@@ -92,7 +106,7 @@ def format_feedback(fb: dict) -> str:
     return "\n".join(lines)
 
 
-async def handle_reply(bot: Bot, chat_id: int, text: str) -> None:
+async def handle_reply(bot: Bot, chat_id: int, text: str, voice: bool = False) -> None:
     s = db.active_chat()
     turn = db.current_chat_turn(s["id"])
     turns = db.chat_turns(s["id"])
@@ -103,7 +117,7 @@ async def handle_reply(bot: Bot, chat_id: int, text: str) -> None:
     await bot.send_chat_action(chat_id, ChatAction.TYPING)
     history = _history(turns) + [{"q": turn["question_ja"], "a": None}]
     try:
-        fb = await llm.chat_turn(s["level"], s["topic_ja"], focus, history, unused, text)
+        fb = await llm.chat_turn(s["level"], s["topic_ja"], focus, history, unused, text, voice)
     except llm.LLMError:
         log.exception("chat grading failed")
         await session.send(bot, chat_id, "⚠️ 批改失败，请再发一次你的回答。", waiting=True)
